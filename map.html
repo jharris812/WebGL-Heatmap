@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+    <meta charset="utf-8">
+	<title>Pest Population Map</title>
+
+    <style>
+      html, body, #map-canvas {
+        height: 100%;
+        margin: 0px;
+        padding: 0px
+      }
+    </style>
+
+	<!-- GLMatrix performs easy matrix operations: (http://glmatrix.net/) -->
+	<script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+
+	<!-- Delaunay triangulation: (https://github.com/ironwallaby/delaunay) -->
+	<script type="text/javascript" src="delaunay.js"></script>
+
+	<!-- Data for California Red Scale populations on 3/29/2014 as JSON. -->
+	<script type="text/javascript" src="pestData.js"></script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
+
+
+	<!-- Fragment Shader -->
+	<script id="shader-fs" type="x-shader/x-fragment">
+	    precision mediump float;
+
+	    varying vec4 vColor;
+
+	    void main(void) {
+	        gl_FragColor = vColor;
+	    }
+	</script>
+
+	<!-- Vertex Shader -->
+	<script id="shader-vs" type="x-shader/x-vertex">
+	    attribute vec3 aVertexPosition;
+	    attribute vec4 aVertexColor;
+
+	    uniform mat4 uMVMatrix;
+	    uniform mat4 uPMatrix;
+
+	    varying vec4 vColor;
+
+	    void main(void) {
+	        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+	        vColor = aVertexColor;
+	    }
+	</script>
+
+
+	<!-- Google Maps -->
+    <script>
+
+		var overlay;
+		pestOverlay.prototype = new google.maps.OverlayView();
+
+		var overlayBorders = { w: 62.281819, s: -150.287132, e: 62.400471, n: -150.005608 };
+
+		// Initialize the map and the custom overlay.
+		function initialize() {
+
+		  calcBorders();
+
+		  var mapOptions = {
+		    zoom: 15,
+		    center: new google.maps.LatLng(overlayBorders.w, overlayBorders.s),
+		    mapTypeId: google.maps.MapTypeId.SATELLITE
+		  };
+
+		  var map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
+
+		  var swBound = new google.maps.LatLng(overlayBorders.w, overlayBorders.s);
+		  var neBound = new google.maps.LatLng(overlayBorders.e, overlayBorders.n);
+		  var bounds = new google.maps.LatLngBounds(swBound, neBound);
+
+		  // The custom pestOverlay object contains the canvas object,
+		  // the bounds of the overlay, and a reference to the map.
+		  overlay = new pestOverlay(bounds, srcImage, map);
+		}
+		
+		function calcBorders() {
+		
+	        overlayBorders = { w: pestData[0].x, s: pestData[0].y, e: pestData[0].x, n: pestData[0].y };
+
+	        for(var i = 0; i < pestData.length; i++) {
+	            if(pestData[i].x < overlayBorders.w) {
+	                overlayBorders.w = pestData[i].x;
+	            }
+
+	            if(pestData[i].x > overlayBorders.e) {
+	                overlayBorders.e = pestData[i].x;
+	            }
+	            if(pestData[i].y < overlayBorders.s) {
+	                overlayBorders.s = pestData[i].y;
+	            }
+	            if(pestData[i].y > overlayBorders.n) {
+	                overlayBorders.n = pestData[i].y;
+	            }
+	        }
+		}
+
+		//Constructor
+		function pestOverlay(bounds, image, map) {
+
+		  // Initialize all properties.
+		  this.bounds_ = bounds;
+		  this.image_ = image;
+		  this.map_ = map;
+
+		  // Define a property to hold the image's div. We'll
+		  // actually create this div upon receipt of the onAdd()
+		  // method so we'll leave it null for now.
+		  this.div_ = null;
+
+		  // Explicitly call setMap on this overlay.
+		  this.setMap(map);
+		}
+		// [END region_constructor]
+
+		// [START region_attachment]
+		/**
+		 * onAdd is called when the map's panes are ready and the overlay has been
+		 * added to the map.
+		 */
+		pestOverlay.prototype.onAdd = function() {
+
+		/*
+		  var div = document.createElement('div');
+		  div.style.borderStyle = 'none';
+		  div.style.borderWidth = '0px';
+		  div.style.position = 'absolute';
+
+		  // Create the img element and attach it to the div.
+		  var img = document.createElement('img');
+		  img.src = this.image_;
+		  img.style.width = '100%';
+		  img.style.opacity = .5;
+		  img.style.height = '100%';
+		  img.style.position = 'absolute';
+		  div.appendChild(img);
+		  
+		  var div = "<div style='boder: none; position: absolute; background:white;'></div>";
+		  */
+
+			var div = document.createElement('canvas');
+			div.style.position = 'absolute';
+			div.style.borderStyle = 'none';
+			div.style.borderWidth = '0px';
+			div.style.opacity = .5;
+			div.style.backgroundColor = 'white';
+
+		  /*
+		  var div = "<canvas id='myCanvas' style='background:white; border: none; opacity: 3.5;height: 100%; width: 100%;'></canvas>";
+		  */
+		  this.div_ = div;
+
+		  // Add the element to the "overlayLayer" pane.
+		  var panes = this.getPanes();
+		  panes.overlayLayer.appendChild(div);
+		};
+		// [END region_attachment]
+
+		// [START region_drawing]
+		pestOverlay.prototype.draw = function() {
+
+		  // We use the south-west and north-east
+		  // coordinates of the overlay to peg it to the correct position and size.
+		  // To do this, we need to retrieve the projection from the overlay.
+		  var overlayProjection = this.getProjection();
+
+		  // Retrieve the south-west and north-east coordinates of this overlay
+		  // in LatLngs and convert them to pixel coordinates.
+		  // We'll use these coordinates to resize the div.
+		  var sw = overlayProjection.fromLatLngToDivPixel(this.bounds_.getSouthWest());
+		  var ne = overlayProjection.fromLatLngToDivPixel(this.bounds_.getNorthEast());
+
+		  // Resize the image's div to fit the indicated dimensions.
+		  var div = this.div_;
+		  div.style.left = sw.x + 'px';
+		  div.style.top = ne.y + 'px';
+		  div.style.width = (ne.x - sw.x) + 'px';
+		  div.style.height = (sw.y - ne.y) + 'px';
+		};
+		// [END region_drawing]
+
+		// [START region_removal]
+		// The onRemove() method will be called automatically from the API if
+		// we ever set the overlay's map property to 'null'.
+		pestOverlay.prototype.onRemove = function() {
+		  this.div_.parentNode.removeChild(this.div_);
+		  this.div_ = null;
+		};
+		// [END region_removal]
+
+		google.maps.event.addDomListener(window, 'load', initialize);
+
+    </script>
+  </head>
+  <body>
+    <div id="map-canvas"></div>
+  </body>
+</html>
